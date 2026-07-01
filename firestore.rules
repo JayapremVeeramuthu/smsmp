@@ -1,0 +1,102 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Check if the user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if the user is an admin
+    function isAdmin() {
+      return isAuthenticated() && 
+        (
+          exists(/databases/$(database)/documents/employees/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.role == 'admin'
+        ) || (
+          // Fallback check if the admin's email has no profile document in Firestore yet
+          request.auth.token.email != null && 
+          !request.auth.token.email.matches('.*@shiftmp\\.local$')
+        );
+    }
+
+    // Employees Collection Rules
+    match /employees/{employeeUid} {
+      allow read, write: if isAdmin();
+      allow read: if isAuthenticated() && request.auth.uid == employeeUid;
+    }
+
+    // Employee Attendance Collection Rules
+    match /employee_attendance/{attendanceId} {
+      allow read, write: if isAdmin();
+      
+      // Employees can read their own logs
+      allow read: if isAuthenticated() && 
+        resource.data.employeeId == get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.employeeId;
+        
+      // Employees can mark/submit their own logs
+      allow create, update: if isAuthenticated() && 
+        request.resource.data.employeeId == get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.employeeId;
+    }
+
+    // Employee Shift Reports Collection Rules
+    match /employee_shift_reports/{reportId} {
+      allow read, write: if isAdmin();
+      
+      // Employees can read their own reports
+      allow read: if isAuthenticated() && 
+        resource.data.employeeId == get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.employeeId;
+        
+      // Employees can submit/create their own reports, but NEVER update or delete them
+      allow create: if isAuthenticated() && 
+        request.resource.data.employeeId == get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.employeeId;
+        
+      // Employees can update their report ONLY if they have an approved correction request
+      allow update: if isAuthenticated() && 
+        request.resource.data.employeeId == get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.employeeId &&
+        exists(/databases/$(database)/documents/correction_requests/$(reportId)) &&
+        get(/databases/$(database)/documents/correction_requests/$(reportId)).data.status == 'Approved';
+    }
+
+    // Correction Requests Collection Rules
+    match /correction_requests/{requestId} {
+      allow read, write: if isAdmin();
+      
+      // Employees can read their own correction requests
+      allow read: if isAuthenticated() && 
+        resource.data.employeeId == get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.employeeId;
+        
+      // Employees can create a correction request with status 'Pending'
+      allow create: if isAuthenticated() && 
+        request.resource.data.employeeId == get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.employeeId &&
+        request.resource.data.status == 'Pending';
+        
+      // Employees can update their own correction request status to 'Completed' (when submitting the corrected report)
+      allow update: if isAuthenticated() && 
+        resource.data.employeeId == get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.employeeId &&
+        resource.data.status == 'Approved' && 
+        request.resource.data.status == 'Completed';
+    }
+
+    // Report Audit Logs Rules (Only Admin write, employee read their own)
+    match /report_audit_logs/{logId} {
+      allow read, write: if isAdmin();
+      
+      allow read: if isAuthenticated() &&
+        resource.data.employeeId == get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.employeeId;
+        
+      // Allow employee to create an audit log document when submitting a correction
+      allow create: if isAuthenticated() &&
+        request.resource.data.employeeId == get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.employeeId;
+    }
+
+    // Admin Manual Attendance Rules (Only Admin access allowed)
+    match /admin_manual_attendance/{attendanceId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Admin Manual Shift Reports Rules (Only Admin access allowed)
+    match /admin_manual_shift_reports/{reportId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}

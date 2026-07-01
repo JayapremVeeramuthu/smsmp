@@ -1,0 +1,9 @@
+@import "tailwindcss";
+
+/* Custom scrollbars, focus rings, or base tweaks if needed */
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-800 antialiased;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}
